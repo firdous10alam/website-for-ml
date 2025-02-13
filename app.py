@@ -5,6 +5,34 @@ import docx
 import pdfplumber
 from flask import Flask, render_template, request
 from sklearn.feature_extraction.text import TfidfVectorizer
+import spacy
+
+nlp = spacy.load("en_core_web_sm")
+
+common_skills = {
+    skill.lower()
+    for skill in {
+        "Python", "Java", "C++", "C", "JavaScript", "HTML", "CSS",
+        "TypeScript", "Swift", "Kotlin", "Go", "Ruby", "PHP", "R", "MATLAB",
+        "Perl", "Rust", "Dart", "Scala", "Shell Scripting", "React", "Angular",
+        "Vue.js", "Node.js", "Django", "Flask", "Spring Boot", "Express.js",
+        "Laravel", "Bootstrap", "TensorFlow", "PyTorch", "Keras",
+        "Scikit-learn", "NLTK", "Pandas", "NumPy", "SQL", "MySQL",
+        "PostgreSQL", "MongoDB", "Firebase", "Cassandra", "Oracle", "Redis",
+        "MariaDB", "AWS", "Azure", "Google Cloud", "Docker", "Kubernetes",
+        "Terraform", "CI/CD", "Jenkins", "Git", "GitHub", "Cybersecurity",
+        "Penetration Testing", "Ubuntu", "Ethical Hacking", "Firewalls",
+        "Cryptography", "IDS", "Network Security", "Machine Learning",
+        "Deep Learning", "Numpy", "Pandas", "Matplotlib", "Computer Vision",
+        "NLP", "Big Data", "Hadoop", "Spark", "Data Analytics", "Power BI",
+        "Tableau", "Data Visualization", "Reinforcement Learning",
+        "Advanced DSA", "DSA", "Data Structures and Algorithm", "DevOps", "ML",
+        "DL", "Image Processing", "JIRA", "Postman", "Excel", "Leadership",
+        "Problem-Solving", "Communication", "Time Management", "Adaptability",
+        "Teamwork", "Presentation Skills", "Critical Thinking",
+        "Decision Making", "Public Speaking", "Project Management"
+    }
+}
 
 
 # Extract text from the uploaded file (PDF or DOCX)
@@ -34,53 +62,56 @@ def extract_text_from_file(file):
     return text.strip() if text.strip() else None
 
 
-def extract_skills_from_text(resume_text):
-    # Define potential headings for the Skills section (case-insensitive)
-    skill_headings = {
-        'skills', 'technical skills', 'core competencies', 'key skills',
-        'skills summary', 'technical proficiencies', 'areas of expertise',
-        'competencies'
+def extract_sections(text):
+    sections = {
+        "summary": None,
+        "education": None,
+        "work_experience": None,
+        "projects": None,
+        "skills": None,
+        "certifications": None,
+        "publications": None,
+        "competencies": None,
     }
 
-    # Common section headings that typically follow Skills (case-insensitive)
-    common_sections = {
-        'work experience', 'experience', 'employment history', 'education',
-        'academic background', 'projects', 'project work',
-        'certifications & course', 'awards', 'hobbies', 'interests',
-        'publications', 'volunteer experience', 'languages', 'references',
-        'honors and awards', 'certifications', 'open source contributions',
-        'objective'
+    section_patterns = {
+        "summary": r"(summary|profile|about me)[:\n]",
+        "education": r"(education|academic background)[:\n]",
+        "work_experience":
+        r"(work experience|employment history|professional experience)[:\n]",
+        "projects": r"(projects|personal projects|academic projects)[:\n]",
+        "skills": r"(skills|technical skills|programming languages)[:\n]",
+        "certifications": r"(certifications|courses|training)[:\n]",
+        "publications": r"(publications|research papers)[:\n]",
+        "competencies": r"(competencies|key competencies|expertise)[:\n]",
     }
 
-    lines = resume_text.split('\n')
-    skills_section = []
-    found_skills = False
+    for section, pattern in section_patterns.items():
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            start_idx = match.end()
+            next_match = min([
+                m.start() for m in [
+                    re.search(p, text[start_idx:], re.IGNORECASE)
+                    for p in section_patterns.values()
+                ] if m
+            ],
+                             default=len(text))
+            sections[section] = text[start_idx:start_idx + next_match]
 
-    for line in lines:
-        stripped_line = line.strip()
-        lower_line = stripped_line.lower()
+    return sections
 
-        # Detect Skills section start
-        if not found_skills:
-            if lower_line in skill_headings:
-                found_skills = True
-            continue
 
-        # Stop when encountering a new section
-        if lower_line in common_sections:
-            break
+def extract_skills(text):
+    extracted_skills = set()
+    doc = nlp(text)
 
-        # Skip empty lines at the start of the Skills section
-        if not skills_section and not stripped_line:
-            continue
+    for token in doc:
+        word = token.text.lower()  # Convert token to lowercase
+        if word in common_skills:
+            extracted_skills.add(word)
 
-        skills_section.append(stripped_line)
-
-    # Clean up trailing empty lines
-    while skills_section and not skills_section[-1]:
-        skills_section.pop()
-
-    return skills_section
+    return list(extracted_skills)
 
 
 # Load ML model and TF-IDF vectorizer from disk
@@ -112,7 +143,7 @@ def process_resume(file):
         return "[ERROR] Invalid or unsupported file format!", None, None, None
 
     # Extract skills from the text
-    extracted_skills = extract_skills_from_text(text)
+    extracted_skills = extract_skills(text)
 
     try:
         # Transform text using the TF-IDF vectorizer
