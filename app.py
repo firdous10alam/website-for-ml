@@ -6,9 +6,12 @@ import pdfplumber
 from flask import Flask, render_template, request
 from sklearn.feature_extraction.text import TfidfVectorizer
 import spacy
+import mysql.connector
 
+# Load SpaCy NLP model
 nlp = spacy.load("en_core_web_sm")
 
+# Define a set of common skills (in lowercase)
 common_skills = {
     skill.lower()
     for skill in {
@@ -34,8 +37,26 @@ common_skills = {
     }
 }
 
+# ---------------- Database Connection ----------------
 
-# Extract text from the uploaded file (PDF or DOCX)
+
+def get_db_connection():
+    """
+    Establishes and returns a connection to the MySQL database.
+    Replace the host, user, password, and database with your own settings.
+    """
+    connection = mysql.connector.connect(
+        host="localhost",  # Your MySQL host
+        user="root",  # Your MySQL username
+        password="PHW#84#jeorr",  # Your MySQL password
+        database="resume_db"  # Your MySQL database name
+    )
+    return connection
+
+
+# ---------------- Resume Processing Functions ----------------
+
+
 def extract_text_from_file(file):
     text = ""
     if file.filename.endswith(".pdf"):
@@ -114,7 +135,16 @@ def extract_skills(text):
     return list(extracted_skills)
 
 
-# Load ML model and TF-IDF vectorizer from disk
+def extract_name(text):
+    name = ""
+    lines = text.split('\n')
+    if lines:
+        name = lines[0].strip()  # Assume the first line contains the name
+        return name
+    else:
+        return None
+
+
 def load_model_and_vectorizer():
     model_path = "model.pkl"
     vectorizer_path = "tfidf_vectorizer.pkl"
@@ -131,10 +161,8 @@ def load_model_and_vectorizer():
         return None, None
 
 
-# Process the uploaded resume: extract text, extract skills, vectorize the text, and predict the job/skill
 def process_resume(file):
     rf, tfidf = load_model_and_vectorizer()
-
     if rf is None or tfidf is None:
         return "[ERROR] ML model is missing!", None, None, None
 
@@ -142,23 +170,23 @@ def process_resume(file):
     if not text:
         return "[ERROR] Invalid or unsupported file format!", None, None, None
 
-    # Extract skills from the text
+    user_name = extract_name(text)
     extracted_skills = extract_skills(text)
+    extract_section = extract_sections(text)
 
     try:
-        # Transform text using the TF-IDF vectorizer
         text_vectorized = tfidf.transform([text])
         print("Vectorized Input Shape:", text_vectorized.shape)
-
-        # Predict the job/skill using the ML model
         predicted_job = rf.predict(text_vectorized)[0]
         print("Predicted Job:", predicted_job)
 
-        return None, predicted_job, extracted_skills, text
+        return None, predicted_job, extracted_skills, extract_section, user_name
     except Exception as e:
         print(f"[ERROR] Prediction failed: {e}")
-        return f"[ERROR] Prediction failed: {e}", None, extracted_skills, text
+        return f"[ERROR] Prediction failed: {e}", None, extracted_skills, extract_section, user_name
 
+
+# ---------------- Flask Application ----------------
 
 app = Flask(__name__, template_folder="templates")
 
@@ -168,9 +196,12 @@ def index():
     predicted_job = None
     error_message = None
     extracted_skills = []
-    extracted_text = ""
+    extract_section = {}
+    user_name = ""
 
     if request.method == "POST":
+        # Get user's name from the form (make sure your index.html has a 'name' input)
+
         if "resume" not in request.files:
             error_message = "No file uploaded!"
         else:
@@ -178,14 +209,31 @@ def index():
             if file.filename == "":
                 error_message = "No selected file!"
             else:
-                error_message, predicted_job, extracted_skills, extracted_text = process_resume(
+                error_message, predicted_job, extracted_skills, extract_section, user_name = process_resume(
                     file)
+
+                # If there was no error in processing, save name and skills to the database.
+                if not error_message:
+                    try:
+                        conn = get_db_connection()
+                        cursor = conn.cursor()
+                        # Convert the list of skills to a comma-separated string.
+                        skills_str = ", ".join(extracted_skills)
+                        insert_query = "INSERT INTO resumes (name, skills) VALUES (%s, %s)"
+                        cursor.execute(insert_query, (user_name, skills_str))
+                        conn.commit()
+                        cursor.close()
+                        conn.close()
+                        print("[INFO] User data saved to database.")
+                    except Exception as db_error:
+                        error_message = f"[ERROR] Database error: {db_error}"
+                        print(error_message)
 
     return render_template("index.html",
                            predicted_job=predicted_job or "",
                            error_message=error_message or "",
                            extracted_skills=extracted_skills,
-                           extracted_text=extracted_text)
+                           extract_section=extract_section)
 
 
 if __name__ == "__main__":
