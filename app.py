@@ -3,10 +3,11 @@ import pickle
 import re
 import docx
 import pdfplumber
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect, session
 from sklearn.feature_extraction.text import TfidfVectorizer
 import spacy
 import mysql.connector
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # Load SpaCy NLP model
 nlp = spacy.load("en_core_web_sm")
@@ -37,21 +38,33 @@ common_skills = {
     }
 }
 
-# ---------------- Database Connection ----------------
+abbreviation_map = {
+    "ml": "machine learning",
+    "ai": "artificial intelligence",
+    "dl": "deep learning",
+    "nlp": "natural language processing",
+    "cv": "computer vision",
+    "ds": "data science",
+    "js": "javascript",
+    "html": "hypertext markup language",
+    "css": "cascading style sheets",
+    "sql": "structured query language",
+    "aws": "amazon web services",
+    "gcp": "google cloud platform",
+    "azure": "microsoft azure",
+    "dsa": "data structure algorithm"
+}
 
 
-def get_db_connection():
-    """
-    Establishes and returns a connection to the MySQL database.
-    Replace the host, user, password, and database with your own settings.
-    """
-    connection = mysql.connector.connect(
-        host="localhost",  # Your MySQL host
-        user="root",  # Your MySQL username
-        password="PHW#84#jeorr",  # Your MySQL password
-        database="resume_db"  # Your MySQL database name
+def get_db_connection(db_name):
+    """Establishes and returns a connection to the specified MySQL database."""
+    return mysql.connector.connect(
+        host="localhost",
+        user="root",
+        password="",
+        database=db_name,
+        # auth_plugin="mysql_native_password"
     )
-    return connection
 
 
 # ---------------- Resume Processing Functions ----------------
@@ -118,7 +131,7 @@ def extract_sections(text):
                 ] if m
             ],
                              default=len(text))
-            sections[section] = text[start_idx:start_idx + next_match]
+            sections[section] = text[start_idx:start_idx + next_match].strip()
 
     return sections
 
@@ -136,11 +149,9 @@ def extract_skills(text):
 
 
 def extract_name(text):
-    name = ""
     lines = text.split('\n')
     if lines:
-        name = lines[0].strip()  # Assume the first line contains the name
-        return name
+        return lines[0].strip()  # Assume the first line contains the name
     else:
         return None
 
@@ -164,11 +175,12 @@ def load_model_and_vectorizer():
 def process_resume(file):
     rf, tfidf = load_model_and_vectorizer()
     if rf is None or tfidf is None:
-        return "[ERROR] ML model is missing!", None, None, None
+        # Return 5 values consistently
+        return "[ERROR] ML model is missing!", None, None, None, None
 
     text = extract_text_from_file(file)
     if not text:
-        return "[ERROR] Invalid or unsupported file format!", None, None, None
+        return "[ERROR] Invalid or unsupported file format!", None, None, None, None
 
     user_name = extract_name(text)
     extracted_skills = extract_skills(text)
@@ -186,9 +198,59 @@ def process_resume(file):
         return f"[ERROR] Prediction failed: {e}", None, extracted_skills, extract_section, user_name
 
 
+def normalize_skill(skill):
+    """Normalize a skill by converting abbreviations to full forms."""
+    skill_lower = skill.lower()  # Handle case sensitivity
+    return abbreviation_map.get(skill_lower, skill_lower)
+
+
+def compare_skills(predicted_job, extracted_skills, user_name):
+    try:
+        # Connect to skills database
+        conn_skills = get_db_connection("skills_db")
+        cursor_skills = conn_skills.cursor(dictionary=True)
+        cursor_skills.execute(
+            "SELECT skills FROM JobRolesSkills WHERE job_role = %s",
+            (predicted_job, ))
+        job_data = cursor_skills.fetchone()
+        cursor_skills.close()
+        conn_skills.close()
+
+        if not job_data:
+            print("[ERROR] Job role not found in database.")
+            return []
+
+        # Normalize required skills from the database
+        required_skills = set(
+            normalize_skill(skill) for skill in job_data["skills"].split(", "))
+
+        # Normalize extracted skills
+        normalized_extracted_skills = set(
+            normalize_skill(skill) for skill in extracted_skills)
+
+        missing_skills = required_skills - normalized_extracted_skills
+
+        if missing_skills:
+            # Connect to recommended skills database
+            conn_mismatch = get_db_connection("recommended_skills_db")
+            cursor_mismatch = conn_mismatch.cursor()
+            cursor_mismatch.execute(
+                "INSERT INTO recommendskills (name, job_role, missing_skills) VALUES (%s, %s, %s)",
+                (user_name, predicted_job, ", ".join(missing_skills)))
+            conn_mismatch.commit()
+            cursor_mismatch.close()
+            conn_mismatch.close()
+
+        return list(missing_skills)
+    except Exception as e:
+        print(f"[ERROR] Skill comparison failed: {e}")
+        return []
+
+
 # ---------------- Flask Application ----------------
 
 app = Flask(__name__, template_folder="templates")
+app.secret_key = 'firdous'
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -196,12 +258,10 @@ def index():
     predicted_job = None
     error_message = None
     extracted_skills = []
-    extract_section = {}
+    missing_skills = []
     user_name = ""
 
     if request.method == "POST":
-        # Get user's name from the form (make sure your index.html has a 'name' input)
-
         if "resume" not in request.files:
             error_message = "No file uploaded!"
         else:
@@ -209,31 +269,113 @@ def index():
             if file.filename == "":
                 error_message = "No selected file!"
             else:
+                # Unpack all 5 returned values from process_resume
                 error_message, predicted_job, extracted_skills, extract_section, user_name = process_resume(
                     file)
-
-                # If there was no error in processing, save name and skills to the database.
                 if not error_message:
+                    missing_skills = compare_skills(predicted_job,
+                                                    extracted_skills,
+                                                    user_name)
                     try:
-                        conn = get_db_connection()
-                        cursor = conn.cursor()
-                        # Convert the list of skills to a comma-separated string.
+                        conn_resume = get_db_connection("resume_db")
+                        cursor_resume = conn_resume.cursor()
                         skills_str = ", ".join(extracted_skills)
-                        insert_query = "INSERT INTO resumes (name, skills) VALUES (%s, %s)"
-                        cursor.execute(insert_query, (user_name, skills_str))
-                        conn.commit()
-                        cursor.close()
-                        conn.close()
-                        print("[INFO] User data saved to database.")
+                        cursor_resume.execute(
+                            "INSERT INTO resumes (name, skills) VALUES (%s, %s)",
+                            (user_name, skills_str))
+                        conn_resume.commit()
+                        cursor_resume.close()
+                        conn_resume.close()
                     except Exception as db_error:
                         error_message = f"[ERROR] Database error: {db_error}"
-                        print(error_message)
 
     return render_template("index.html",
                            predicted_job=predicted_job or "",
                            error_message=error_message or "",
                            extracted_skills=extracted_skills,
-                           extract_section=extract_section)
+                           missing_skills=missing_skills,
+                           recommended_skills=missing_skills)
+
+
+@app.route('/signup', methods=['GET', 'POST'])
+def signup():
+    message = ""
+    if request.method == 'POST':
+        username = request.form.get('username')
+        email = request.form.get('email')
+        password = request.form.get('password')
+
+        if not (username and email and password):
+            message = "All fields are required!"
+            return render_template('signup.html', message=message)
+
+        hashed_password = generate_password_hash(password)
+
+        try:
+            # Connect to the users database
+            conn = get_db_connection("resume_db")
+            cursor = conn.cursor()
+
+            check_query = "SELECT * FROM users_signup_details WHERE email = %s"
+            cursor.execute(check_query, (email, ))
+            existing_user = cursor.fetchone()
+
+            if existing_user:
+                message = "User already exists! Try logging in."
+            else:
+                insert_query = "INSERT INTO users_signup_details (username, email, password) VALUES (%s, %s, %s)"
+                cursor.execute(insert_query,
+                               (username, email, hashed_password))
+                conn.commit()
+                message = "Signup Successful! Now you can login."
+
+            cursor.close()
+            conn.close()
+        except Exception as e:
+            message = f"Error: {e}"
+
+    return render_template('signup.html', message=message)
+
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    message = ""
+    if request.method == 'POST':
+        email = request.form.get('email')
+        password = request.form.get('password')
+
+        try:
+            # Connect to the users database
+            conn = get_db_connection("resume_db")
+            cursor = conn.cursor()
+
+            query = "SELECT id, username, password FROM users_signup_details WHERE email = %s"
+            cursor.execute(query, (email, ))
+            user = cursor.fetchone()
+            cursor.close()
+            conn.close()
+
+            if user:
+                user_id, username, stored_password = user
+                if check_password_hash(stored_password, password):
+                    session['user_id'] = user_id
+                    session['username'] = username
+                    return redirect('/dashboard')
+                else:
+                    message = "Invalid Credentials!"
+            else:
+                message = "Invalid Credentials!"
+        except Exception as e:
+            message = f"Error: {e}"
+
+    return render_template('login.html', message=message)
+
+
+@app.route('/dashboard')
+def dashboard():
+    if 'username' in session:
+        return f"Welcome {session['username']} to your dashboard!"
+    return redirect('/login')
 
 
 if __name__ == "__main__":
