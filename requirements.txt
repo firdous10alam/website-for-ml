@@ -7,3 +7,5 @@ numpy
 spacy
 mysql-connector-python
 nltk
+docx
+flask-cors
