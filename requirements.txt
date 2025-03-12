@@ -9,3 +9,5 @@ mysql-connector-python
 nltk
 docx
 flask-cors
+Werkzeug
+requests
