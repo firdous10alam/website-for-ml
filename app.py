@@ -68,7 +68,7 @@ def get_db_connection(db_name="resume_screening_db"):
     return mysql.connector.connect(
         host="localhost",
         user="root",
-        password="",
+        password="PHW#84#jeorr",
         database=db_name,
         # auth_plugin="mysql_native_password"
     )
@@ -203,7 +203,7 @@ def fetch_job_listings_from_api(query="developer",
                                 sort_by=None):
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
-        "x-rapidapi-key": "",  # Go to README.md file
+        "x-rapidapi-key": "b3f6c38eb4msh51e29555e60ab6fp141903jsn664e178e86fa",  # Go to README.md file
         "x-rapidapi-host": "jsearch.p.rapidapi.com"
     }
     # Build parameters dictionary
