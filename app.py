@@ -13,6 +13,7 @@ import spacy
 import mysql.connector
 import requests
 from werkzeug.security import generate_password_hash, check_password_hash
+import requests
 
 # ---------------------- NLP & Resume Setup ---------------------- #
 
@@ -63,7 +64,6 @@ abbreviation_map = {
 
 # ---------------------- Database Connection ---------------------- #
 
-
 def get_db_connection(db_name="resume_screening_db"):
     return mysql.connector.connect(
         host="localhost",
@@ -73,9 +73,7 @@ def get_db_connection(db_name="resume_screening_db"):
         # auth_plugin="mysql_native_password"
     )
 
-
 # ---------------------- Resume Processing Functions ---------------------- #
-
 
 def extract_text_from_file(file):
     """
@@ -94,7 +92,6 @@ def extract_text_from_file(file):
         text = "\n".join([para.text for para in doc.paragraphs])
     return text.strip()
 
-
 def extract_skills(text):
     extracted_skills = set()
     if not text:
@@ -105,11 +102,9 @@ def extract_skills(text):
             extracted_skills.add(token.text.lower())
     return list(extracted_skills)
 
-
 def extract_name(text):
     lines = text.split('\n')
     return lines[0].strip() if lines else None
-
 
 def load_model_and_vectorizer():
     """
@@ -126,7 +121,6 @@ def load_model_and_vectorizer():
         print(f"[ERROR] Failed to load model/vectorizer: {e}")
         return None, None
 
-
 def process_resume(file):
     """
     Extract text, name, and skills from the resume.
@@ -137,23 +131,22 @@ def process_resume(file):
     rf, tfidf = load_model_and_vectorizer()
     if not rf or not tfidf:
         return "[ERROR] ML model is missing!", None, [], None, "india"
-
+    
     text = extract_text_from_file(file)
     if not text:
         # Possibly scanned or empty PDF, return an error
         return "[ERROR] No readable text found in resume!", None, [], None, "india"
-
+    
     user_name = extract_name(text)
     extracted_skills = extract_skills(text)
     resume_country = "india"  # Default to India
-
+    
     try:
         text_vectorized = tfidf.transform([text])
         predicted_job = rf.predict(text_vectorized)[0]
         return None, predicted_job, extracted_skills, user_name, resume_country
     except Exception as e:
         return f"[ERROR] Prediction failed: {e}", None, extracted_skills, user_name, resume_country
-
 
 def compare_skills(predicted_job, extracted_skills, user_name):
     """
@@ -165,23 +158,23 @@ def compare_skills(predicted_job, extracted_skills, user_name):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT skills FROM jobrolesskills WHERE job_role = %s",
-                       (predicted_job, ))
+        cursor.execute("SELECT skills FROM jobrolesskills WHERE job_role = %s", (predicted_job,))
         job_data = cursor.fetchone()
-
+        
         if not job_data:
             return []
-
+        
         required_skills = set(job_data["skills"].lower().split(", "))
         extracted_skills_set = set(skill.lower() for skill in extracted_skills)
         missing_skills = required_skills - extracted_skills_set
-
+        
         if missing_skills:
             cursor.execute(
                 "INSERT INTO recommendskills (name, job_role, missing_skills) VALUES (%s, %s, %s)",
-                (user_name, predicted_job, ", ".join(missing_skills)))
+                (user_name, predicted_job, ", ".join(missing_skills))
+            )
             conn.commit()
-
+        
         cursor.close()
         conn.close()
         return list(missing_skills)
@@ -189,25 +182,21 @@ def compare_skills(predicted_job, extracted_skills, user_name):
         print(f"[ERROR] Skill comparison failed: {e}")
         return []
 
-
 # ---------------------- Job Listings via API ---------------------- #
 
-
-def fetch_job_listings_from_api(query="developer",
-                                country="india",
-                                page=1,
-                                job_type=None,
-                                remote=None,
-                                date_posted=None,
-                                salary_range=None,
-                                sort_by=None):
+def fetch_job_listings_from_api(query="developer", country="india", page=None, job_type=None, remote=None, date_posted=None, salary_range=None, sort_by=None):
+    
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
         "x-rapidapi-key": "b3f6c38eb4msh51e29555e60ab6fp141903jsn664e178e86fa",  # Go to README.md file
         "x-rapidapi-host": "jsearch.p.rapidapi.com"
     }
     # Build parameters dictionary
-    params = {"query": query, "country": country, "page": page}
+    params = {
+        "query": query,
+        "country": country,
+        "page": page
+    }
     if job_type:
         params["job_type"] = job_type
     if remote is not None:
@@ -222,22 +211,19 @@ def fetch_job_listings_from_api(query="developer",
     response = requests.get(url, headers=headers, params=params)
     return response.text
 
-
 # ---------------------- Flask Application Setup ---------------------- #
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = 'firdous'
 CORS(app)
 
-
 @app.route("/api/job-details", methods=["GET"])
 def job_details_api():
     try:
         job_data = fetch_job_listings_from_api()
-        return jsonify({"success": True, "data": job_data})
+        return jsonify({"success": True, "data": json.loads(job_data.encode('utf-8').decode('utf-8'))})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
-
 
 @app.route("/", methods=["GET", "POST"])
 def index():
@@ -258,70 +244,53 @@ def index():
                 error_message = "No selected file!"
             else:
                 # Process the resume
-                error_message, predicted_job, extracted_skills, user_name, resume_country = process_resume(
-                    file)
-
+                error_message, predicted_job, extracted_skills, user_name, resume_country = process_resume(file)
+                
                 if not error_message:
                     # Compare skills only if we got a valid predicted job
-                    missing_skills = compare_skills(predicted_job,
-                                                    extracted_skills,
-                                                    user_name)
-
+                    missing_skills = compare_skills(predicted_job, extracted_skills, user_name)
+                    
                     # Insert resume details into DB
                     try:
                         conn = get_db_connection()
                         cursor = conn.cursor()
-                        cursor.execute(
-                            "INSERT INTO resumes (name, skills) VALUES (%s, %s)",
-                            (user_name
-                             or "Unknown", ", ".join(extracted_skills)))
+                        cursor.execute("INSERT INTO resumes (name, skills) VALUES (%s, %s)",
+                                       (user_name or "Unknown", ", ".join(extracted_skills)))
                         conn.commit()
                         cursor.close()
                         conn.close()
                     except Exception as db_error:
                         error_message = f"[ERROR] Database error: {db_error}"
-
+        
         # Always try to fetch job listings after processing
         if not error_message:
             job_list = []
             if extracted_skills:
                 # Loop through each extracted skill and fetch job listings for each
                 for skill in extracted_skills:
-                    job_listings_json = fetch_job_listings_from_api(
-                        query=skill, country=resume_country)
+                    job_listings_json = fetch_job_listings_from_api(query=skill, country=resume_country)
                     try:
                         job_listings_data = json.loads(job_listings_json)
-                        if isinstance(job_listings_data,
-                                      dict) and "data" in job_listings_data:
+                        if isinstance(job_listings_data, dict) and "data" in job_listings_data:
                             job_list.extend(job_listings_data["data"])
                     except Exception as e:
-                        print(
-                            f"[ERROR] Failed to fetch or parse job listings for {skill}: {e}"
-                        )
+                        print(f"[ERROR] Failed to fetch or parse job listings for {skill}: {e}")
             elif predicted_job:
-                job_listings_json = fetch_job_listings_from_api(
-                    query=predicted_job, country=resume_country)
+                job_listings_json = fetch_job_listings_from_api(query=predicted_job, country=resume_country)
                 try:
                     job_listings_data = json.loads(job_listings_json)
-                    if isinstance(job_listings_data,
-                                  dict) and "data" in job_listings_data:
+                    if isinstance(job_listings_data, dict) and "data" in job_listings_data:
                         job_list = job_listings_data["data"]
                 except Exception as e:
-                    print(
-                        f"[ERROR] Failed to fetch or parse job listings for {predicted_job}: {e}"
-                    )
+                    print(f"[ERROR] Failed to fetch or parse job listings for {predicted_job}: {e}")
             else:
-                job_listings_json = fetch_job_listings_from_api(
-                    query="developer", country=resume_country)
+                job_listings_json = fetch_job_listings_from_api(query="developer", country=resume_country)
                 try:
                     job_listings_data = json.loads(job_listings_json)
-                    if isinstance(job_listings_data,
-                                  dict) and "data" in job_listings_data:
+                    if isinstance(job_listings_data, dict) and "data" in job_listings_data:
                         job_list = job_listings_data["data"]
                 except Exception as e:
-                    print(
-                        f"[ERROR] Failed to fetch or parse job listings for 'developer': {e}"
-                    )
+                    print(f"[ERROR] Failed to fetch or parse job listings for 'developer': {e}")
 
     return render_template("index.html",
                            user_name=user_name or "",
@@ -331,7 +300,6 @@ def index():
                            missing_skills=missing_skills,
                            job_list=job_list)
 
-
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
     message = ""
@@ -339,38 +307,36 @@ def signup():
         username = request.form.get('username')
         email = request.form.get('email')
         password = request.form.get('password')
-
+        
         if not (username and email and password):
             message = "All fields are required!"
             return render_template('signup.html', message=message)
-
+        
         hashed_password = generate_password_hash(password)
-
+        
         try:
             # Connect to the users database
             conn = get_db_connection("signup_db")
             cursor = conn.cursor()
-
+            
             check_query = "SELECT * FROM users_signup_details WHERE email = %s"
-            cursor.execute(check_query, (email, ))
+            cursor.execute(check_query, (email,))
             existing_user = cursor.fetchone()
-
+            
             if existing_user:
                 message = "User already exists! Try logging in."
             else:
                 insert_query = "INSERT INTO users_signup_details (username, email, password) VALUES (%s, %s, %s)"
-                cursor.execute(insert_query,
-                               (username, email, hashed_password))
+                cursor.execute(insert_query, (username, email, hashed_password))
                 conn.commit()
                 message = "Signup Successful! Now you can login."
-
+            
             cursor.close()
             conn.close()
         except Exception as e:
             message = f"Error: {e}"
-
+    
     return render_template('signup.html', message=message)
-
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -385,7 +351,7 @@ def login():
             cursor = conn.cursor()
 
             query = "SELECT id, username, password FROM users_signup_details WHERE email = %s"
-            cursor.execute(query, (email, ))
+            cursor.execute(query, (email,))
             user = cursor.fetchone()
             cursor.close()
             conn.close()
@@ -405,13 +371,11 @@ def login():
 
     return render_template('login.html', message=message)
 
-
 @app.route('/dashboard')
 def dashboard():
     if 'username' in session:
         return f"Welcome {session['username']} to your dashboard!"
     return redirect('/login')
-
 
 if __name__ == "__main__":
     app.run(debug=True)
