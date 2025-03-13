@@ -1,0 +1,11 @@
+# Exported from Render on 2025-03-13T20:43:24Z
+services:
+- type: web
+  name: resume-analyser
+  runtime: python
+  repo: https://github.com/firdous10alam/website-for-ml
+  plan: free
+  region: oregon
+  buildCommand: pip install -r requirements.txt && python -m spacy download en_core_web_sm
+  startCommand: gunicorn app:app
+version: "1"
