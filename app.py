@@ -188,7 +188,7 @@ def fetch_job_listings_from_api(query="developer", country="india", page=None, j
     
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
-        "x-rapidapi-key": "b3f6c38eb4msh51e29555e60ab6fp141903jsn664e178e86fa",  # Go to README.md file
+        "x-rapidapi-key": os.environ.get("API_KEY"),  # Go to README.md file
         "x-rapidapi-host": "jsearch.p.rapidapi.com"
     }
     # Build parameters dictionary
