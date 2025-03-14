@@ -64,15 +64,15 @@ abbreviation_map = {
 
 # ---------------------- Database Connection ---------------------- #
 
-def get_db_connection(db_name="resume_screening_db"):
+def get_db_connection():
     return mysql.connector.connect(
-        host="localhost",
-        user="root",
-        password="",
-        database=db_name,
-        # auth_plugin="mysql_native_password"
+        host=os.environ.get("DB_HOST", "mysql-firdous10-resume-analyzer07.h.aivencloud.com"),
+        port=int(os.environ.get("DB_PORT", 14204)),
+        user=os.environ.get("DB_USER", "avnadmin"),
+        password=os.environ.get("DB_PASSWORD", "AVNS_knibaUfH_YmoLwnRRVx"),  # Replace with actual password
+        database=os.environ.get("DB_NAME", "defaultdb"),
+        ssl_ca=os.environ.get("SSL_CA_PATH", "ca.pem")  # Make sure the SSL file exists
     )
-
 # ---------------------- Resume Processing Functions ---------------------- #
 
 def extract_text_from_file(file):
@@ -158,7 +158,7 @@ def compare_skills(predicted_job, extracted_skills, user_name):
     try:
         conn = get_db_connection()
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT skills FROM jobrolesskills WHERE job_role = %s", (predicted_job,))
+        cursor.execute("SELECT skills FROM JobRolesSkills WHERE job_role = %s", (predicted_job,))
         job_data = cursor.fetchone()
         
         if not job_data:
@@ -188,7 +188,7 @@ def fetch_job_listings_from_api(query="developer", country="india", page=None, j
     
     url = "https://jsearch.p.rapidapi.com/search"
     headers = {
-        "x-rapidapi-key": "",  # Go to README.md file
+        "x-rapidapi-key": "b3f6c38eb4msh51e29555e60ab6fp141903jsn664e178e86fa",  # Go to README.md file
         "x-rapidapi-host": "jsearch.p.rapidapi.com"
     }
     # Build parameters dictionary
