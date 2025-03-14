@@ -67,11 +67,11 @@ abbreviation_map = {
 def get_db_connection():
     return mysql.connector.connect(
         host=os.environ.get("DB_HOST", "mysql-firdous10-resume-analyzer07.h.aivencloud.com"),
-        port=int(os.environ.get("DB_PORT", 14204)),
-        user=os.environ.get("DB_USER", "avnadmin"),
-        password=os.environ.get("DB_PASSWORD", "AVNS_knibaUfH_YmoLwnRRVx"),  # Replace with actual password
-        database=os.environ.get("DB_NAME", "defaultdb"),
-        ssl_ca=os.environ.get("SSL_CA_PATH", "ca.pem")  # Make sure the SSL file exists
+        port=int(os.environ.get("DB_PORT")),
+        user=os.environ.get("DB_USER"),
+        password=os.environ.get("DB_PASSWORD"),  # Replace with actual password
+        database=os.environ.get("DB_NAME"),
+        ssl_ca=os.environ.get("SSL_CA_PATH")  # Make sure the SSL file exists
     )
 # ---------------------- Resume Processing Functions ---------------------- #
 
